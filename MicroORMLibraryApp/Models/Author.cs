@@ -6,7 +6,7 @@ namespace MicroORMLibraryApp.Models
         public int AuthorId { get; set; }
         public string FirstName { get; set; }
         public string LastName { get; set; }
-        public DateTime? BirthDate { get; set; }
+        public DateOnly? BirthDate { get; set; }  // Змінив на DateOnly?
         public string Country { get; set; }
         public DateTime CreatedDate { get; set; }
     }

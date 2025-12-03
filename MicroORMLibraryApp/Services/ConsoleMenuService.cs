@@ -2,16 +2,21 @@
 using MicroORMLibraryApp.Models;
 using MicroORMLibraryApp.Repository;
 using Spectre.Console;
+using System.Globalization;
+using Npgsql;
+using Dapper;
 
 namespace MicroORMLibraryApp.Services
 {
     public class ConsoleMenuService
     {
         private readonly LibraryRepository _repository;
+        private readonly string _connectionString;
 
-        public ConsoleMenuService(LibraryRepository repository)
+        public ConsoleMenuService(LibraryRepository repository, string connectionString)
         {
             _repository = repository;
+            _connectionString = connectionString;
         }
 
         public void Run()
@@ -37,7 +42,7 @@ namespace MicroORMLibraryApp.Services
                             "🔍 Запити з об'єднанням таблиць",
                             "🔍 Запити з фільтрацією",
                             "🔍 Запити з агрегатними функціями",
-                            "⚙️ Тестування каскадного видалення",
+                            "🔄 Скинути базу даних",
                             "❌ Вихід"
                         }));
 
@@ -64,8 +69,8 @@ namespace MicroORMLibraryApp.Services
                     case "🔍 Запити з агрегатними функціями":
                         ShowAggregateQueriesMenu();
                         break;
-                    case "⚙️ Тестування каскадного видалення":
-                        TestCascadeDelete();
+                    case "🔄 Скинути базу даних":
+                        ResetDatabase();
                         break;
                     case "❌ Вихід":
                         return;
@@ -397,20 +402,22 @@ namespace MicroORMLibraryApp.Services
         private void DisplayBooksWithAuthors()
         {
             var books = _repository.GetBooksWithAuthors();
-            
+    
             var table = new Table();
             table.AddColumn("Назва книги");
             table.AddColumn("Жанр");
-            table.AddColumn("Автор");
-            table.AddColumn("Порядок");
+            table.AddColumn("Автори");
+            table.AddColumn("Рік");
+            table.AddColumn("Ціна");
 
             foreach (var book in books)
             {
                 table.AddRow(
                     book.Title,
                     book.Genre ?? "Н/Д",
-                    $"{book.FirstName} {book.LastName}" ?? "Без автора",
-                    book.AuthorOrder?.ToString() ?? "1"
+                    book.FirstName ?? "Без автора", // Now contains all authors
+                    book.PublicationYear?.ToString() ?? "Н/Д",
+                    book.Price?.ToString("C") ?? "Н/Д"
                 );
             }
 
@@ -660,7 +667,7 @@ namespace MicroORMLibraryApp.Services
                 FirstName = AnsiConsole.Ask<string>("Ім'я:"),
                 LastName = AnsiConsole.Ask<string>("Прізвище:"),
                 Country = AnsiConsole.Ask<string>("Країна:"),
-                BirthDate = AnsiConsole.Ask<DateTime?>("Дата народження (yyyy-MM-dd, Enter для пропуску):")
+                BirthDate = ParseDateOnlyFromUser("Дата народження (yyyy-MM-dd, Enter для пропуску):")
             };
 
             try
@@ -687,6 +694,7 @@ namespace MicroORMLibraryApp.Services
                 LastName = AnsiConsole.Ask<string>("Прізвище:"),
                 Email = AnsiConsole.Ask<string>("Email:"),
                 Phone = AnsiConsole.Ask<string>("Телефон:"),
+                RegistrationDate = DateOnly.FromDateTime(DateTime.Now),
                 IsActive = true
             };
 
@@ -712,8 +720,8 @@ namespace MicroORMLibraryApp.Services
             {
                 BookId = AnsiConsole.Ask<int>("ID книги:"),
                 ReaderId = AnsiConsole.Ask<int>("ID читача:"),
-                BorrowDate = DateTime.Now,
-                DueDate = AnsiConsole.Ask<DateTime>("Термін повернення (yyyy-MM-dd):"),
+                BorrowDate = DateOnly.FromDateTime(DateTime.Now),
+                DueDate = ParseDateOnlyFromUser("Термін повернення (yyyy-MM-dd):") ?? DateOnly.FromDateTime(DateTime.Now.AddDays(30)),
                 Status = "Borrowed"
             };
 
@@ -793,6 +801,13 @@ namespace MicroORMLibraryApp.Services
             var newFirstName = AnsiConsole.Ask<string>("Ім'я:", author.FirstName);
             var newLastName = AnsiConsole.Ask<string>("Прізвище:", author.LastName);
             var newCountry = AnsiConsole.Ask<string>("Країна:", author.Country ?? "");
+            
+            // Конвертуємо DateOnly? в DateTime? для AnsiConsole, потім назад
+            var birthDateInput = AnsiConsole.Ask<string>("Дата народження (yyyy-MM-dd, Enter для пропуску):", 
+                author.BirthDate?.ToString("yyyy-MM-dd") ?? "");
+            author.BirthDate = string.IsNullOrEmpty(birthDateInput) ? 
+                null : 
+                DateOnly.ParseExact(birthDateInput, "yyyy-MM-dd", CultureInfo.InvariantCulture);
 
             author.FirstName = newFirstName;
             author.LastName = newLastName;
@@ -872,14 +887,17 @@ namespace MicroORMLibraryApp.Services
                 return;
             }
 
-            var returnDate = AnsiConsole.Ask<DateTime?>("Дата повернення (yyyy-MM-dd, Enter для NULL):");
-            var status = AnsiConsole.Prompt(
+            // Конвертуємо DateOnly? в string для вводу, потім назад
+            var returnDateInput = AnsiConsole.Ask<string>("Дата повернення (yyyy-MM-dd, Enter для NULL):", 
+                borrowing.ReturnDate?.ToString("yyyy-MM-dd") ?? "");
+            borrowing.ReturnDate = string.IsNullOrEmpty(returnDateInput) ? 
+                null : 
+                DateOnly.ParseExact(returnDateInput, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+            borrowing.Status = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title("Статус:")
                     .AddChoices("Borrowed", "Returned", "Overdue"));
-
-            borrowing.ReturnDate = returnDate;
-            borrowing.Status = status;
 
             try
             {
@@ -1043,6 +1061,31 @@ namespace MicroORMLibraryApp.Services
         }
         #endregion
 
+        #region Helper Methods
+        private DateOnly? ParseDateOnlyFromUser(string prompt)
+        {
+            var input = AnsiConsole.Ask<string>(prompt);
+            if (string.IsNullOrEmpty(input))
+                return null;
+
+            try
+            {
+                return DateOnly.ParseExact(input, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+            }
+            catch
+            {
+                try
+                {
+                    return DateOnly.Parse(input, CultureInfo.InvariantCulture);
+                }
+                catch
+                {
+                    AnsiConsole.MarkupLine("[red]Неправильний формат дати! Використовуйте yyyy-MM-dd[/]");
+                    return null;
+                }
+            }
+        }
+
         private void SearchBooks()
         {
             Console.Clear();
@@ -1175,138 +1218,63 @@ namespace MicroORMLibraryApp.Services
             WaitForContinue();
         }
 
-        private void TestCascadeDelete()
+        private string FindInitSqlFile()
+        {
+            // Шукаємо файл init.sql в різних місцях
+            var possiblePaths = new[]
+            {
+                "init.sql",
+                Path.Combine(Directory.GetCurrentDirectory(), "init.sql"),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "init.sql"),
+                Path.Combine(Directory.GetCurrentDirectory(), "..", "init.sql"),
+                Path.Combine(Directory.GetCurrentDirectory(), "..", "..", "init.sql"),
+                Path.Combine(Directory.GetCurrentDirectory(), "..", "..", "..", "init.sql"),
+                Path.Combine(Environment.CurrentDirectory, "init.sql")
+            };
+    
+            foreach (var path in possiblePaths)
+            {
+                if (File.Exists(path))
+                {
+                    return path;
+                }
+            }
+    
+            return null;
+        }
+        
+        private void ResetDatabase()
         {
             Console.Clear();
-            AnsiConsole.MarkupLine("[bold red]⚙️ Тестування каскадного видалення[/]");
-            AnsiConsole.WriteLine();
-
-            // Показуємо книги з кількома авторами
-            var multiAuthorBooks = _repository.GetBooksWithMultipleAuthors();
-            
-            AnsiConsole.MarkupLine("[bold]Книги з кількома авторами:[/]");
-            if (!multiAuthorBooks.Any())
+            AnsiConsole.MarkupLine("[bold yellow]Скидання бази даних[/]");
+    
+            try
             {
-                AnsiConsole.MarkupLine("[yellow]Книг з кількома авторами не знайдено[/]");
-            }
-            else
-            {
-                var table = new Table();
-                table.AddColumn("ID");
-                table.AddColumn("Назва");
-                table.AddColumn("Кількість авторів");
-
-                foreach (var book in multiAuthorBooks)
+                // Знаходимо файл init.sql
+                var initSqlPath = FindInitSqlFile();
+                if (string.IsNullOrEmpty(initSqlPath))
                 {
-                    table.AddRow(
-                        book.BookId.ToString(),
-                        book.Title,
-                        book.AuthorCount.ToString()
-                    );
+                    AnsiConsole.MarkupLine("[red]Файл init.sql не знайдено![/]");
+                    WaitForContinue();
+                    return;
                 }
-
-                AnsiConsole.Write(table);
+        
+                AnsiConsole.MarkupLine($"Використовую файл: {initSqlPath}");
+        
+                // Виконуємо SQL
+                using var conn = new NpgsqlConnection(_connectionString);
+                conn.Open();
+        
+                var initSql = File.ReadAllText(initSqlPath);
+                conn.Execute(initSql);
+        
+                AnsiConsole.MarkupLine("[green]✅ Базу даних успішно скинуто![/]");
             }
-
-            // Показуємо всіх авторів
-            var authors = _repository.GetAllAuthors();
-            AnsiConsole.MarkupLine("\n[bold]Всі автори:[/]");
-            var authorTable = new Table();
-            authorTable.AddColumn("ID");
-            authorTable.AddColumn("Автор");
-            authorTable.AddColumn("Країна");
-
-            foreach (var author in authors)
+            catch (Exception ex)
             {
-                authorTable.AddRow(
-                    author.AuthorId.ToString(),
-                    $"{author.FirstName} {author.LastName}",
-                    author.Country ?? "Н/Д"
-                );
+                AnsiConsole.MarkupLine($"[red]Помилка: {ex.Message}[/]");
             }
-
-            AnsiConsole.Write(authorTable);
-            AnsiConsole.WriteLine();
-
-            // Запитуємо ID автора для тестування
-            var authorId = AnsiConsole.Ask<int>("\nВведіть ID автора для тестування каскадного видалення:");
-            var authorToDelete = _repository.GetAuthorById(authorId);
-
-            if (authorToDelete == null)
-            {
-                AnsiConsole.MarkupLine("[red]Автор не знайдений![/]");
-                WaitForContinue();
-                return;
-            }
-
-            AnsiConsole.MarkupLine($"\n[bold]Тестуємо каскадне видалення для автора:[/] [yellow]{authorToDelete.FirstName} {authorToDelete.LastName}[/]");
-            
-            // Показуємо книги цього автора
-            var authorBooks = _repository.GetBooksByAuthor(authorId);
-            AnsiConsole.MarkupLine($"\n[bold]Книги цього автора:[/]");
-            
-            if (authorBooks.Any())
-            {
-                foreach (var book in authorBooks)
-                {
-                    // Перевіряємо, чи є у книги інші автори
-                    var booksWithAuthors = _repository.GetBooksWithAuthors();
-                    var bookAuthors = booksWithAuthors.Where(b => b.BookId == book.BookId).ToList();
-                    
-                    if (bookAuthors.Count > 1)
-                    {
-                        AnsiConsole.MarkupLine($"- [green]{book.Title}[/] (є інші автори, книга залишиться)");
-                    }
-                    else
-                    {
-                        AnsiConsole.MarkupLine($"- [red]{book.Title}[/] (єдиний автор, книга буде видалена!)");
-                    }
-                }
-            }
-            else
-            {
-                AnsiConsole.MarkupLine("[yellow]У автора немає книг[/]");
-            }
-
-            AnsiConsole.MarkupLine("\n[bold red]Увага![/] При видаленні автора:");
-            AnsiConsole.MarkupLine("- Книги з іншими авторами залишаться");
-            AnsiConsole.MarkupLine("- Книги без інших авторів будуть видалені автоматично (каскадне видалення)");
-            
-            if (AnsiConsole.Confirm("\nПродовжити з видаленням автора?"))
-            {
-                try
-                {
-                    var result = _repository.DeleteAuthor(authorId);
-                    if (result)
-                    {
-                        AnsiConsole.MarkupLine("[green]Автор успішно видалений![/]");
-                        
-                        // Перевіряємо, чи залишилися книги без авторів
-                        var orphanedBooks = _repository.GetBooksWithoutAuthors();
-                        if (orphanedBooks.Any())
-                        {
-                            AnsiConsole.MarkupLine("[red]Увага! Знайдені книги без авторів:[/]");
-                            foreach (var book in orphanedBooks)
-                            {
-                                AnsiConsole.MarkupLine($"- {book.Title}");
-                            }
-                        }
-                        else
-                        {
-                            AnsiConsole.MarkupLine("[green]Книг без авторів не знайдено (всі книги мають хоча б одного автора)[/]");
-                        }
-                    }
-                    else
-                    {
-                        AnsiConsole.MarkupLine("[yellow]Не вдалося видалити автора[/]");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    AnsiConsole.MarkupLine($"[red]Помилка: {ex.Message}[/]");
-                }
-            }
-
+    
             WaitForContinue();
         }
 
@@ -1315,5 +1283,6 @@ namespace MicroORMLibraryApp.Services
             AnsiConsole.WriteLine("\nНатисніть будь-яку клавішу для продовження...");
             Console.ReadKey();
         }
+        #endregion
     }
 }

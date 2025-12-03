@@ -8,7 +8,7 @@ namespace MicroORMLibraryApp.Models
         public string LastName { get; set; }
         public string Email { get; set; }
         public string Phone { get; set; }
-        public DateTime RegistrationDate { get; set; }
+        public DateOnly RegistrationDate { get; set; }  // Змінив на DateOnly
         public bool IsActive { get; set; }
     }
 }

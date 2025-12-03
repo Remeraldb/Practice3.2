@@ -12,6 +12,7 @@ namespace MicroORMLibraryApp.Models
         public string FirstName { get; set; }
         public string LastName { get; set; }
         public int? AuthorOrder { get; set; }
+        public string AuthorNames => $"{FirstName} {LastName}".Trim();
     }
 
     public class AuthorWithBookCount
@@ -26,8 +27,8 @@ namespace MicroORMLibraryApp.Models
     public class BorrowingWithDetails
     {
         public int BorrowingId { get; set; }
-        public DateTime BorrowDate { get; set; }
-        public DateTime DueDate { get; set; }
+        public DateTime BorrowDate { get; set; }  // Лишаємо DateTime для зручності відображення
+        public DateTime DueDate { get; set; }     // Лишаємо DateTime для зручності відображення
         public string Status { get; set; }
         public string Title { get; set; }
         public string ISBN { get; set; }
@@ -51,7 +52,7 @@ namespace MicroORMLibraryApp.Models
         public string LastName { get; set; }
         public string Email { get; set; }
         public int OverdueCount { get; set; }
-        public DateTime OldestOverdue { get; set; }
+        public DateTime OldestOverdue { get; set; }  // Лишаємо DateTime
     }
 
     public class BooksStatistics

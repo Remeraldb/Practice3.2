@@ -6,9 +6,9 @@ namespace MicroORMLibraryApp.Models
         public int BorrowingId { get; set; }
         public int BookId { get; set; }
         public int ReaderId { get; set; }
-        public DateTime BorrowDate { get; set; }
-        public DateTime DueDate { get; set; }
-        public DateTime? ReturnDate { get; set; }
+        public DateOnly BorrowDate { get; set; }  // Змінив на DateOnly
+        public DateOnly DueDate { get; set; }     // Змінив на DateOnly
+        public DateOnly? ReturnDate { get; set; } // Змінив на DateOnly?
         public string Status { get; set; }
     }
 }
